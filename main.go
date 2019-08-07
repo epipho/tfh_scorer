@@ -28,6 +28,7 @@ func main() {
 	name := flag.String("n", "", "Name of contestant being scored")
 	email := flag.String("e", "", "Email of competitor")
 	class := flag.String("c", "", "Competition class e.g. unlimited")
+	delay := flag.Int("d", 500, "Delay between updates (in ms)")
 	flag.Parse()
 
 	if len(*url) == 0 || len(*key) == 0 {
@@ -85,7 +86,7 @@ func main() {
 		fmt.Println("Unable to start scoring:", err)
 		os.Exit(1)
 	}
-	err = score(outer, inner, errchan, *url, *key, id)
+	err = score(outer, inner, errchan, *url, *key, *delay, id)
 	if err != nil {
 		fmt.Println("Unable to complete scoring:", err)
 		cancel_scoring(*url, *key, id)
@@ -94,14 +95,20 @@ func main() {
 	fmt.Println("DONE")
 }
 
-func score(outer *tail.Tail, inner *tail.Tail, errchan <-chan error, url string, key string, id string) error {
+func score(outer *tail.Tail, inner *tail.Tail, errchan <-chan error, url string, key string, delay int, id string) error {
 	outer_samples := 0
 	inner_samples := 0
 	outer_buckets := []float32{}
 	inner_buckets := []float32{}
 	outer_done := false
 	inner_done := false
-	ticker := time.NewTicker(1 * time.Second)
+
+	temp_outer_samples := 0
+	temp_inner_samples := 0
+	temp_outer_buckets := []float32{}
+	temp_inner_buckets := []float32{}
+
+	ticker := time.NewTicker(time.Duration(delay) * time.Millisecond)
 	for {
 		select {
 		case ln := <-outer.Lines:
@@ -117,6 +124,8 @@ func score(outer *tail.Tail, inner *tail.Tail, errchan <-chan error, url string,
 			} else {
 				outer_samples++
 				outer_buckets = process_sample(ln.Text, outer_buckets)
+				temp_outer_samples++
+				temp_outer_buckets = process_sample(ln.Text, temp_outer_buckets)
 			}
 		case ln := <-inner.Lines:
 			if ln == nil {
@@ -131,9 +140,15 @@ func score(outer *tail.Tail, inner *tail.Tail, errchan <-chan error, url string,
 			} else {
 				inner_samples++
 				inner_buckets = process_sample(ln.Text, inner_buckets)
+				temp_inner_samples++
+				temp_inner_buckets = process_sample(ln.Text, temp_inner_buckets)
 			}
 		case <-ticker.C:
-			update_score(outer_buckets, outer_samples, inner_buckets, inner_samples, url, key, id, false)
+			update_score(temp_outer_buckets, temp_outer_samples, temp_inner_buckets, temp_inner_samples, url, key, id, false)
+			temp_inner_samples = 0
+			temp_inner_buckets = []float32{}
+			temp_outer_samples = 0
+			temp_outer_buckets = []float32{}
 		case err := <-errchan:
 			return err
 		}
